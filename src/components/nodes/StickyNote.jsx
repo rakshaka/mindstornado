@@ -1,65 +1,134 @@
-import { useState, useEffect, useRef } from "react";
+import { useRef } from "react";
 import { Rnd } from "react-rnd";
 import { useSelectionStore } from "@/store/selectionStore";
 
-export default function StickyNote({ node, onDrag, onResize, scale = 1 }) {
-  const setSelectedNode = useSelectionStore((state) => state.setSelectedNode);
-  const [size, setSize] = useState({ width: node.width, height: node.height });
-  const [position, setPosition] = useState({ x: node.x, y: node.y });
-  const [fontSize, setFontSize] = useState(node.fontRem ? `${node.fontRem}rem` : "1rem");
+export default function StickyNote({
+  node,
+  onDrag,
+  onResize,
+  scale = 1,
+  isMultiSelectEnabled = false,
+  isPanMode = false,
+  multiSelectForcedByKey = false, // ← nuevo
+}) {
+  const {
+    selectedNode,
+    selectedNodes,
+    setSelectedNode,
+    addToSelection,
+    removeFromSelection,
+  } = useSelectionStore();
+
+  const multi = isMultiSelectEnabled || multiSelectForcedByKey;
+
+const isSelected = multi
+  ? (selectedNodes || []).some((n) => n?.id === node.id)
+  : selectedNode?.id === node.id;
+
 
   const contentRef = useRef(null);
+  const mouseDownPos = useRef({ x: 0, y: 0 });
+  const dragStartPos = useRef(new Map());
 
-  useEffect(() => {
-    setFontSize(node.fontRem ? `${node.fontRem}rem` : "1rem");
-  }, [node.fontRem]);
-
-  const handleSelect = (e) => {
-    if (e.button === 1) return; // Ignorar botón del medio
-    e.stopPropagation();
-    setSelectedNode(node);
+  const handleSelect = () => {
+    if (isMultiSelectEnabled && isSelected) return;
+    if (isMultiSelectEnabled) {
+      if (isSelected) {
+        removeFromSelection(node.id);
+      } else {
+        addToSelection(node);
+      }
+    } else {
+      setSelectedNode(node);
+    }
   };
+
+  const handleClick = () => {
+    const multi = isMultiSelectEnabled || multiSelectForcedByKey;
+  
+    if (multi) {
+      if (isSelected) {
+        removeFromSelection(node.id);
+      } else {
+        addToSelection(node);
+      }
+    } else {
+      setSelectedNode(node);
+    }
+  };
+  
 
   return (
     <Rnd
-      size={size}
-      position={position}
-      minWidth={250}
-      minHeight={150}
-      scale={scale} // 👈 Corrige el drag con zoom
-      onClick={handleSelect}
-      onDragStart={handleSelect}
-      onResizeStart={handleSelect}
-      onDragStop={(e, d) => {
-        if (e.button === 1) return;
-        const newPos = { x: d.x, y: d.y };
-        setPosition(newPos);
-        onDrag(node.id, d.x, d.y);
-      }}
-      onResize={(e, direction, ref, delta, pos) => {
-        const newWidth = parseInt(ref.style.width);
-        const newHeight = parseInt(ref.style.height);
-        setSize({ width: newWidth, height: newHeight });
-        setPosition({ x: pos.x, y: pos.y });
-      }}
-      onResizeStop={(e, direction, ref, delta, pos) => {
-        const newWidth = parseInt(ref.style.width);
-        const newHeight = parseInt(ref.style.height);
-        const { x, y } = pos;
-        setSize({ width: newWidth, height: newHeight });
-        setPosition({ x, y });
-        onResize(node.id, { width: newWidth, height: newHeight });
-        onDrag(node.id, x, y);
-      }}
-      bounds="parent"
-      enableResizing
-      className={`select-none rounded-xl shadow text-gray-800 p-3 transition-none ${node.color}`}
-      style={{ zIndex: node.zIndex ?? 1 }}
-    >
+  data-node-id={node.id}
+  size={{ width: node.width, height: node.height }}
+  position={{ x: node.x, y: node.y }}
+  minWidth={250}
+  minHeight={150}
+  scale={scale}
+  bounds={false}
+  enableResizing
+  className={`select-none rounded-xl shadow text-black p-3 transition-none ${node.color} ${
+    isSelected ? "ring-4 ring-blue-400" : "ring-0"
+  }`}
+  style={{ zIndex: node.zIndex ?? 1 }}
+  onMouseDown={(e) => {
+    if (isPanMode) return;
+    mouseDownPos.current = { x: e.clientX, y: e.clientY };
+  
+    const allNodes = useSelectionStore.getState().selectedNodes;
+    const selection = isMultiSelectEnabled && isSelected ? allNodes : [node];
+  
+    dragStartPos.current = new Map(
+      selection.map(n => [n.id, { x: n.x, y: n.y }])
+    );
+  }}
+  
+  onDrag={(e, d) => {
+    const selection = Array.from(dragStartPos.current.entries());
+    const draggedStart = dragStartPos.current.get(node.id);
+    if (!draggedStart) return;
+  
+    const deltaX = d.x - draggedStart.x;
+    const deltaY = d.y - draggedStart.y;
+  
+    selection.forEach(([id, pos]) => {
+      onDrag(id, pos.x + deltaX, pos.y + deltaY);
+    });
+  }}
+  
+  onDragStop={(e, d) => {
+    const wasClick =
+      Math.abs(e.clientX - mouseDownPos.current.x) < 3 &&
+      Math.abs(e.clientY - mouseDownPos.current.y) < 3;
+
+    if (wasClick) {
+      if (isMultiSelectEnabled) {
+        if (isSelected) {
+          removeFromSelection(node.id);
+        } else {
+          addToSelection(node);
+        }
+      } else {
+        setSelectedNode(node);
+      }
+    }
+  }}
+    onResizeStop={(e, direction, ref, delta, position) => {
+      const newWidth = parseInt(ref.style.width);
+      const newHeight = parseInt(ref.style.height);
+      const { x, y } = position;
+      onResize(node.id, { width: newWidth, height: newHeight });
+      onDrag(node.id, x, y);
+    }}
+  >
       <div
         ref={contentRef}
         className="w-full h-full font-comic whitespace-pre-wrap break-words overflow-hidden pointer-events-none"
-        style={{ fontSize, textAlign: node.textAlign || "left" }}
+        style={{
+          fontSize: `${node.fontRem ?? 1}rem`,
+          textAlign: node.textAlign || "left",
+        }}
       >
         {node.content}
       </div>
